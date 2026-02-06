@@ -1,51 +1,41 @@
-import SquatCoach from "./components/SquatCoach";
+import { useState } from "react";
+import CameraView from "./components/CameraView";
+import Dashboard from "./components/DashBoard";
+import { unlockAudio } from "./ai/voice";
+import { startSession, endSession } from "./tracking/session";
 import "./App.css";
 
 function App() {
+  const [running, setRunning] = useState(false);
+  const [reps, setReps] = useState(0);
+  const [session, setSession] = useState(null);
+  const [duration, setDuration] = useState(0);
+
+  const start = () => {
+    unlockAudio();
+    setSession(startSession());
+    setRunning(true);
+  };
+
+  const stop = () => {
+    const ended = endSession(session);
+    setReps(reps);
+    setDuration(Math.floor(ended.duration));
+    setRunning(false);
+  };
+
   return (
-    <div className="app-root">
-      {/* Top Bar */}
-      <header className="top-bar">
-        <h1>GymBuddy AI</h1>
-        <span className="status">● Live</span>
-      </header>
+    <div className="app">
+      <h1>GymBuddy AI 🏋🏾‍♂️</h1>
 
-      {/* Main Content */}
-      <div className="main-layout">
-        {/* Camera + AI */}
-        <section className="camera-section">
-          <SquatCoach />
-        </section>
+      {!running && <button onClick={start}>Start Workout</button>}
+      {running && <button onClick={stop}>Stop Workout</button>}
 
-        {/* Side Panel */}
-        <aside className="side-panel">
-          <div className="card">
-            <h2>Workout</h2>
-            <p>Exercise: Squats</p>
-            <p>AI Coach: Active</p>
-          </div>
+      {running && <CameraView onRep={setReps} />}
 
-          <div className="card">
-            <h2>Tips</h2>
-            <ul>
-              <li>Keep your back straight</li>
-              <li>Push through your heels</li>
-              <li>Control your movement</li>
-            </ul>
-          </div>
-
-          <div className="card">
-            <h2>Session</h2>
-            <p>Reps tracked in real-time</p>
-            <p>Audio feedback enabled</p>
-          </div>
-        </aside>
-      </div>
-
-      {/* Footer */}
-      <footer className="footer">
-        <p>© 2026 GymBuddy · AI-Powered Fitness Coach</p>
-      </footer>
+      {!running && session && (
+        <Dashboard reps={reps} duration={duration} />
+      )}
     </div>
   );
 }

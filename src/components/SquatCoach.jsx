@@ -12,6 +12,7 @@ export default function SquatCoach() {
 
   useEffect(() => {
     let detector;
+    let animationId;
 
     async function loadModel() {
       detector = await poseDetection.createDetector(
@@ -22,7 +23,7 @@ export default function SquatCoach() {
     }
 
     async function detect(detector) {
-      if (videoRef.current.readyState === 4) {
+      if (videoRef.current && videoRef.current.readyState === 4) {
         const poses = await detector.estimatePoses(videoRef.current);
         if (poses.length > 0) {
           const keypoints = poses[0].keypoints;
@@ -39,10 +40,15 @@ export default function SquatCoach() {
           }
         }
       }
-      requestAnimationFrame(() => detect(detector));
+      animationId = requestAnimationFrame(() => detect(detector));
     }
 
     loadModel();
+
+    return () => {
+      if (animationId) cancelAnimationFrame(animationId);
+      if (detector) detector.dispose();
+    };
   }, []);
 
   return (
