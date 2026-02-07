@@ -1,0 +1,17 @@
+body {
+  background: #020617;
+  color: white;
+  font-family: system-ui;
+  margin: 0;
+}
+
+.app {
+  text-align: center;
+  padding: 1rem;
+}
+
+video {
+  width: 100%;
+  max-width: 640px;
+  border-radius: 12px;
+}
