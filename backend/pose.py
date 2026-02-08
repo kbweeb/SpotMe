@@ -1,28 +1,37 @@
-import mediapipe as mp
 import cv2
-
-mp_pose = mp.solutions.pose
+import mediapipe as mp
+import numpy as np
 
 class PoseDetector:
     def __init__(self):
-        self.pose = mp_pose.Pose(
+        self.mp_pose = mp.solutions.pose
+        self.pose = self.mp_pose.Pose(
+            static_image_mode=False,
             model_complexity=1,
-            min_detection_confidence=0.6,
-            min_tracking_confidence=0.6
+            smooth_landmarks=True,
+            enable_segmentation=False,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
         )
+        self.mp_draw = mp.solutions.drawing_utils
 
-    def process(self, frame):
-        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.pose.process(image)
+    def detect(self, frame):
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        result = self.pose.process(rgb)
+        return result
 
-        if not results.pose_landmarks:
-            return None
+    def draw_landmarks(self, frame, result):
+        if result.pose_landmarks:
+            self.mp_draw.draw_landmarks(
+                frame,
+                result.pose_landmarks,
+                self.mp_pose.POSE_CONNECTIONS
+            )
+        return frame
 
-        lm = results.pose_landmarks.landmark
-
-        return {
-            "shoulder": (lm[11].x, lm[11].y),
-            "hip": (lm[23].x, lm[23].y),
-            "knee": (lm[25].x, lm[25].y),
-            "ankle": (lm[27].x, lm[27].y)
-        }
+    def extract_landmarks(self, result):
+        landmarks = []
+        if result.pose_landmarks:
+            for lm in result.pose_landmarks.landmark:
+                landmarks.append([lm.x, lm.y, lm.z, lm.visibility])
+        return landmarks
