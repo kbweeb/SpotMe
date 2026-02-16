@@ -2,6 +2,11 @@ from fastapi import FastAPI, WebSocket
 import cv2
 import numpy as np
 import base64
+import sys
+import os
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from pose import PoseDetector
 from squat import SquatCounter
