@@ -1,15 +1,26 @@
-import cv2
-import numpy as np
 import os
+import importlib.util
 import urllib.request
+
+import cv2
+
+
+TASK_MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
+TASK_MODEL_PATH = os.path.join(TASK_MODEL_DIR, "pose_landmarker_lite.task")
+MOVENET_MODULE_PATH = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "pose", "local", "movenet_local.py")
+)
+TASK_MODEL_URLS = [
+    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
+    "https://storage.googleapis.com/mediapipe-tasks/python/pose_landmarker/lite/pose_landmarker_lite.task",
+]
+MIN_KEYPOINT_SCORE = 0.2
 
 
 class PoseDetector:
-    """Pose detector that tries MediaPipe `solutions`, then `tasks`, then OpenPose (OpenCV DNN), then a fallback.
+    """Unified pose detector with multiple backends and a safe fallback."""
 
-    - `process(frame)` returns a dict with keys: `shoulder`,`hip`,`knee`,`ankle` as (x,y).
-      Coordinates are normalized (0..1) for ML-based detectors, or pixel coords for fallback.
-    """
+    _task_model_error = None
 
     def __init__(self):
         self.backend = None
@@ -17,31 +28,27 @@ class PoseDetector:
         self.detector = None
         self.mp = None
 
-        # Try local MoveNet (TFLite) first
+        # 1) Try local MoveNet (TFLite)
         try:
-            import sys
-            import os
-            parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            if parent_dir not in sys.path:
-                sys.path.insert(0, parent_dir)
-            from pose.local.movenet_local import MoveNetLocal
-            movenet = MoveNetLocal()
-            if getattr(movenet, 'interpreter', None) is not None:
-                self.detector = movenet
-                self.backend = "movenet_local"
-                print("✓ PoseDetector: using MoveNet local TFLite")
-                return
+            movenet_cls = self._load_movenet_class()
+            if movenet_cls is not None:
+                movenet = movenet_cls()
+                if getattr(movenet, "interpreter", None) is not None:
+                    self.detector = movenet
+                    self.backend = "movenet_local"
+                    print("PoseDetector: using MoveNet local TFLite")
+                    return
         except Exception:
             pass
 
-        # Try MediaPipe solutions API
+        # 2) Try MediaPipe solutions API
         try:
             import mediapipe as mp
-            if hasattr(mp, "solutions"):
+
+            if hasattr(mp, "solutions") and hasattr(mp.solutions, "pose"):
                 self.mp = mp
                 self.backend = "solutions"
-                self.mp_pose = mp.solutions.pose
-                self.pose = self.mp_pose.Pose(
+                self.pose = mp.solutions.pose.Pose(
                     static_image_mode=False,
                     model_complexity=1,
                     smooth_landmarks=True,
@@ -49,31 +56,18 @@ class PoseDetector:
                     min_detection_confidence=0.5,
                     min_tracking_confidence=0.5,
                 )
-                self.mp_draw = mp.solutions.drawing_utils
-                print("✓ PoseDetector: using mediapipe.solutions")
+                print("PoseDetector: using mediapipe.solutions")
                 return
         except Exception:
             pass
 
-        # Try MediaPipe Tasks API
+        # 3) Try MediaPipe Tasks API
         try:
             import mediapipe as mp
             from mediapipe.tasks import python
             from mediapipe.tasks.python import vision
-            
-            # Download model if not exists
-            model_path = "pose_landmarker_lite.task"
-            if not os.path.exists(model_path):
-                print("Downloading MediaPipe pose model...")
-                model_url = "https://storage.googleapis.com/mediapipe-tasks/python/pose_landmarker/lite/pose_landmarker_lite.task"
-                try:
-                    urllib.request.urlretrieve(model_url, model_path)
-                    print("✓ Model downloaded")
-                except:
-                    print("Failed to download model")
-                    raise Exception("Could not download model")
 
-            self.mp = mp
+            model_path = self._ensure_pose_task_model()
             base_options = python.BaseOptions(model_asset_path=model_path)
             options = vision.PoseLandmarkerOptions(
                 base_options=base_options,
@@ -82,136 +76,269 @@ class PoseDetector:
                 min_pose_presence_confidence=0.5,
                 min_tracking_confidence=0.5,
             )
+            self.mp = mp
             self.detector = vision.PoseLandmarker.create_from_options(options)
             self.backend = "tasks"
-            print("✓ PoseDetector: using mediapipe.tasks")
+            print("PoseDetector: using mediapipe.tasks")
             return
-        except Exception as e:
+        except Exception:
             pass
 
-        # Try OpenPose (OpenCV DNN)
+        # 4) Try OpenPose (OpenCV DNN)
         try:
-            from .op_pose import OpenPoseDetector
+            try:
+                from .op_pose import OpenPoseDetector
+            except ImportError:
+                from op_pose import OpenPoseDetector
 
-            self.detector = OpenPoseDetector()
-            if self.detector and getattr(self.detector, "net", None) is not None:
+            detector = OpenPoseDetector()
+            if detector and getattr(detector, "net", None) is not None:
+                self.detector = detector
                 self.backend = "openpose"
-                print("✓ PoseDetector: using OpenPose (OpenCV DNN)")
+                print("PoseDetector: using OpenPose (OpenCV DNN)")
                 return
         except Exception:
             pass
 
-        # Fallback
+        # 5) Fallback
         self.backend = "fallback"
         print("Warning: PoseDetector using fallback estimator")
 
+    @classmethod
+    def _ensure_pose_task_model(cls):
+        os.makedirs(TASK_MODEL_DIR, exist_ok=True)
+        if os.path.exists(TASK_MODEL_PATH):
+            return TASK_MODEL_PATH
+
+        if cls._task_model_error:
+            raise RuntimeError(cls._task_model_error)
+
+        last_error = None
+        for model_url in TASK_MODEL_URLS:
+            try:
+                print(f"Downloading MediaPipe pose model from: {model_url}")
+                urllib.request.urlretrieve(model_url, TASK_MODEL_PATH)
+                print("Pose task model downloaded")
+                return TASK_MODEL_PATH
+            except Exception as err:
+                last_error = err
+
+        cls._task_model_error = f"Could not download pose task model: {last_error}"
+        raise RuntimeError(cls._task_model_error)
+
+    @staticmethod
+    def _load_movenet_class():
+        if not os.path.exists(MOVENET_MODULE_PATH):
+            return None
+        spec = importlib.util.spec_from_file_location(
+            "gymbuddy_movenet_local", MOVENET_MODULE_PATH
+        )
+        if not spec or not spec.loader:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return getattr(module, "MoveNetLocal", None)
+
+    @staticmethod
+    def _avg_xy(point_a, point_b):
+        if point_a and point_b:
+            return ((point_a[0] + point_b[0]) / 2.0, (point_a[1] + point_b[1]) / 2.0)
+        if point_a:
+            return point_a
+        if point_b:
+            return point_b
+        return None
+
+    @staticmethod
+    def _avg_scored_point(point_a, point_b):
+        valid_points = []
+        for point in (point_a, point_b):
+            if not point or len(point) < 2:
+                continue
+            score = float(point[2]) if len(point) > 2 else 1.0
+            if score >= MIN_KEYPOINT_SCORE:
+                valid_points.append((float(point[0]), float(point[1])))
+        if len(valid_points) == 2:
+            return (
+                (valid_points[0][0] + valid_points[1][0]) / 2.0,
+                (valid_points[0][1] + valid_points[1][1]) / 2.0,
+            )
+        if len(valid_points) == 1:
+            return valid_points[0]
+        return None
+
+    def _from_movenet(self, keypoints):
+        if not keypoints:
+            return None
+
+        shoulder = self._avg_scored_point(
+            keypoints.get("left_shoulder"), keypoints.get("right_shoulder")
+        )
+        hip = self._avg_scored_point(keypoints.get("left_hip"), keypoints.get("right_hip"))
+        knee = self._avg_scored_point(
+            keypoints.get("left_knee"), keypoints.get("right_knee")
+        )
+        ankle = self._avg_scored_point(
+            keypoints.get("left_ankle"), keypoints.get("right_ankle")
+        )
+
+        if shoulder and hip and knee and ankle:
+            return {
+                "shoulder": shoulder,
+                "hip": hip,
+                "knee": knee,
+                "ankle": ankle,
+            }
+        return None
+
+    @staticmethod
+    def _landmark_xy(landmark):
+        if landmark is None:
+            return None
+        return float(landmark.x), float(landmark.y)
+
     def process(self, frame):
-        h, w = frame.shape[:2]
+        if self.backend == "movenet_local":
+            try:
+                return self._from_movenet(self.detector.detect(frame))
+            except Exception as err:
+                print(f"PoseDetector (movenet_local) error: {err}")
+                return None
 
         if self.backend == "solutions":
             try:
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                res = self.pose.process(rgb)
-                if res.pose_landmarks:
-                    lm = res.pose_landmarks.landmark
-                    return {
-                        "shoulder": (lm[11].x, lm[11].y),
-                        "hip": (lm[23].x, lm[23].y),
-                        "knee": (lm[25].x, lm[25].y),
-                        "ankle": (lm[27].x, lm[27].y),
-                    }
-            except Exception as e:
-                print(f"PoseDetector (solutions) error: {e}")
+                result = self.pose.process(rgb)
+                if result.pose_landmarks:
+                    landmarks = result.pose_landmarks.landmark
+                    shoulder = self._avg_xy(
+                        self._landmark_xy(landmarks[11]),
+                        self._landmark_xy(landmarks[12]),
+                    )
+                    hip = self._avg_xy(
+                        self._landmark_xy(landmarks[23]),
+                        self._landmark_xy(landmarks[24]),
+                    )
+                    knee = self._avg_xy(
+                        self._landmark_xy(landmarks[25]),
+                        self._landmark_xy(landmarks[26]),
+                    )
+                    ankle = self._avg_xy(
+                        self._landmark_xy(landmarks[27]),
+                        self._landmark_xy(landmarks[28]),
+                    )
+                    if shoulder and hip and knee and ankle:
+                        return {
+                            "shoulder": shoulder,
+                            "hip": hip,
+                            "knee": knee,
+                            "ankle": ankle,
+                        }
+            except Exception as err:
+                print(f"PoseDetector (solutions) error: {err}")
                 return None
 
         if self.backend == "tasks":
             try:
-                mp_img = self.mp.Image(image_format=self.mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                result = self.detector.detect(mp_img)
-                if hasattr(result, "pose_landmarks") and result.pose_landmarks:
-                    lm = result.pose_landmarks.landmark
-                    return {
-                        "shoulder": (lm[11].x, lm[11].y),
-                        "hip": (lm[23].x, lm[23].y),
-                        "knee": (lm[25].x, lm[25].y),
-                        "ankle": (lm[27].x, lm[27].y),
-                    }
-            except Exception as e:
-                print(f"PoseDetector (tasks) error: {e}")
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                mp_image = self.mp.Image(image_format=self.mp.ImageFormat.SRGB, data=rgb)
+                result = self.detector.detect(mp_image)
+                pose_landmarks = getattr(result, "pose_landmarks", None)
+                if pose_landmarks:
+                    first_pose = pose_landmarks[0]
+                    if hasattr(first_pose, "landmark"):
+                        first_pose = first_pose.landmark
+                    shoulder = self._avg_xy(
+                        self._landmark_xy(first_pose[11]),
+                        self._landmark_xy(first_pose[12]),
+                    )
+                    hip = self._avg_xy(
+                        self._landmark_xy(first_pose[23]),
+                        self._landmark_xy(first_pose[24]),
+                    )
+                    knee = self._avg_xy(
+                        self._landmark_xy(first_pose[25]),
+                        self._landmark_xy(first_pose[26]),
+                    )
+                    ankle = self._avg_xy(
+                        self._landmark_xy(first_pose[27]),
+                        self._landmark_xy(first_pose[28]),
+                    )
+                    if shoulder and hip and knee and ankle:
+                        return {
+                            "shoulder": shoulder,
+                            "hip": hip,
+                            "knee": knee,
+                            "ankle": ankle,
+                        }
+            except Exception as err:
+                print(f"PoseDetector (tasks) error: {err}")
                 return None
 
         if self.backend == "openpose":
             try:
                 return self.detector.detect(frame)
-            except Exception as e:
-                print(f"PoseDetector (openpose) error: {e}")
+            except Exception as err:
+                print(f"PoseDetector (openpose) error: {err}")
                 return None
 
-        # fallback: return rough estimates in pixel coordinates
         if self.backend == "fallback":
             return self._detect_fallback(frame)
 
         return None
 
     def _detect_fallback(self, frame):
-        """Smart fallback using OpenCV face detection and simple heuristics."""
+        """Fallback using face detection + simple body heuristics."""
         h, w = frame.shape[:2]
-        
-        # Try to detect faces/heads using cascade classifier
         try:
             face_cascade = cv2.CascadeClassifier(
-                cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
             )
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-            
             if len(faces) > 0:
-                x, y, faceW, faceH = faces[0]
-                # If we detect a face, infer body position
-                shoulder_y = y + faceH + faceH // 3
-                hip_y = shoulder_y + faceH * 1.5
-                knee_y = hip_y + faceH * 1.5
-                ankle_y = knee_y + faceH
-                
-                center_x = x + faceW // 2
-                
+                x, y, face_w, face_h = faces[0]
+                shoulder_y = y + face_h + face_h // 3
+                hip_y = shoulder_y + face_h * 1.5
+                knee_y = hip_y + face_h * 1.5
+                ankle_y = knee_y + face_h
+                center_x = x + face_w // 2
                 return {
                     "shoulder": (center_x / w, min(shoulder_y / h, 1.0)),
                     "hip": (center_x / w, min(hip_y / h, 1.0)),
                     "knee": (center_x / w, min(knee_y / h, 1.0)),
                     "ankle": (center_x / w, min(ankle_y / h, 1.0)),
                 }
-        except:
+        except Exception:
             pass
-        
-        # Default fallback with normalized coordinates
+
         return {
-            "shoulder": (w * 0.5 / w, h * 0.25 / h),
-            "hip": (w * 0.5 / w, h * 0.5 / h),
-            "knee": (w * 0.5 / w, h * 0.75 / h),
-            "ankle": (w * 0.5 / w, h * 0.95 / h),
+            "shoulder": (0.5, 0.25),
+            "hip": (0.5, 0.5),
+            "knee": (0.5, 0.75),
+            "ankle": (0.5, 0.95),
         }
 
     def draw_on(self, frame, landmarks):
-        """Helper to draw landmarks and connections on `frame` for debugging."""
+        """Draw landmarks and basic connections on a frame."""
         if not landmarks:
             return frame
 
         h, w = frame.shape[:2]
-        pts = {}
-        for k, (x, y) in landmarks.items():
+        points = {}
+        for key, (x, y) in landmarks.items():
             if 0.0 <= x <= 1.0 and 0.0 <= y <= 1.0:
                 px, py = int(x * w), int(y * h)
             else:
                 px, py = int(x), int(y)
-            pts[k] = (px, py)
+            points[key] = (px, py)
             cv2.circle(frame, (px, py), 6, (0, 255, 255), -1)
 
-        seq = ["shoulder", "hip", "knee", "ankle"]
-        for i in range(len(seq) - 1):
-            a = pts.get(seq[i])
-            b = pts.get(seq[i + 1])
-            if a and b:
-                cv2.line(frame, a, b, (0, 200, 255), 3)
+        ordered = ["shoulder", "hip", "knee", "ankle"]
+        for idx in range(len(ordered) - 1):
+            start = points.get(ordered[idx])
+            end = points.get(ordered[idx + 1])
+            if start and end:
+                cv2.line(frame, start, end, (0, 200, 255), 3)
 
         return frame

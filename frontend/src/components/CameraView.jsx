@@ -7,17 +7,24 @@ export default function CameraView({ onUpdate }) {
   useEffect(() => {
     let interval = null;
     let mounted = true;
+    const videoElement = videoRef.current;
+
+    const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+    const backendHost =
+      import.meta.env.VITE_BACKEND_HOST || window.location.hostname || "127.0.0.1";
+    const backendPort = import.meta.env.VITE_BACKEND_PORT || "8010";
+    const wsUrl = `${wsProtocol}://${backendHost}:${backendPort}/ws`;
 
     // open websocket
     try {
-      wsRef.current = new WebSocket("ws://localhost:8000/ws");
+      wsRef.current = new WebSocket(wsUrl);
       wsRef.current.onopen = () => console.log("WebSocket connected");
       wsRef.current.onclose = () => console.log("WebSocket closed");
       wsRef.current.onerror = (e) => console.warn("WebSocket error", e);
       wsRef.current.onmessage = (msg) => {
         try {
           const data = JSON.parse(msg.data);
-          onUpdate && onUpdate(data);
+          onUpdate?.(data);
         } catch (err) {
           console.warn("Invalid WS message", err);
         }
@@ -35,28 +42,29 @@ export default function CameraView({ onUpdate }) {
       .getUserMedia({ video: true })
       .then((stream) => {
         if (!mounted) return;
-        const v = videoRef.current;
-        if (!v) return;
-        v.srcObject = stream;
-        v.playsInline = true;
-        v.muted = true;
-        v.autoplay = true;
-        v.play().catch(() => {});
+        if (!videoElement) return;
+        videoElement.srcObject = stream;
+        videoElement.playsInline = true;
+        videoElement.muted = true;
+        videoElement.autoplay = true;
+        videoElement.play().catch(() => {
+          console.warn("Video autoplay failed");
+        });
 
         // send frames at interval but only when video is ready
         const sendFrame = () => {
-          const video = videoRef.current;
           const ws = wsRef.current;
-          if (!video) return;
-          const vw = video.videoWidth || video.clientWidth;
-          const vh = video.videoHeight || video.clientHeight;
+          if (!videoElement) return;
+          const vw = videoElement.videoWidth || videoElement.clientWidth;
+          const vh = videoElement.videoHeight || videoElement.clientHeight;
           if (!vw || !vh) return;
           if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
           canvas.width = vw;
           canvas.height = vh;
           try {
-            ctx.drawImage(video, 0, 0, vw, vh);
+            if (!ctx) return;
+            ctx.drawImage(videoElement, 0, 0, vw, vh);
             const base64 = canvas.toDataURL("image/jpeg").split(",")[1];
             ws.send(base64);
           } catch (err) {
@@ -73,17 +81,23 @@ export default function CameraView({ onUpdate }) {
     return () => {
       mounted = false;
       if (interval) clearInterval(interval);
-      try {
-        if (wsRef.current) wsRef.current.close();
-      } catch (e) {}
-      try {
-        const v = videoRef.current;
-        if (v && v.srcObject) {
-          const tracks = v.srcObject.getTracks();
-          tracks.forEach((t) => t.stop());
-          v.srcObject = null;
+      const ws = wsRef.current;
+      if (ws) {
+        try {
+          ws.close();
+        } catch (err) {
+          console.warn("WebSocket close failed", err);
         }
-      } catch (e) {}
+      }
+      if (videoElement && videoElement.srcObject) {
+        try {
+          const tracks = videoElement.srcObject.getTracks();
+          tracks.forEach((t) => t.stop());
+          videoElement.srcObject = null;
+        } catch (err) {
+          console.warn("Camera cleanup failed", err);
+        }
+      }
     };
   }, [onUpdate]);
 

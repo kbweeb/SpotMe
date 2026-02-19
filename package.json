@@ -3,8 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "cd frontend && npm run dev",
-    "frontend:dev": "cd frontend && npm run dev",
-    "backend:dev": "cd backend && python -m uvicorn main:app --reload"
+    "dev": "npm run frontend:dev",
+    "frontend:dev": "npm --prefix frontend run dev",
+    "backend:dev": "python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8010",
+    "dev:all": "powershell -ExecutionPolicy Bypass -File .\\run_project.ps1"
   }
 }

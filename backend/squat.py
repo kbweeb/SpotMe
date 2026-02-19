@@ -10,13 +10,22 @@ class SquatCounter:
         self.reps = 0
 
     def analyze(self, landmarks):
+        # Validate that all required landmarks are present
+        required_keys = ["hip", "knee", "ankle", "shoulder"]
+        if not landmarks or not all(k in landmarks for k in required_keys):
+            return self.reps, "Incomplete pose detection"
+        
         hip = landmarks["hip"]
         knee = landmarks["knee"]
         ankle = landmarks["ankle"]
         shoulder = landmarks["shoulder"]
 
-        knee_angle = calculate_angle(hip, knee, ankle)
-        hip_angle = calculate_angle(shoulder, hip, knee)
+        try:
+            knee_angle = calculate_angle(hip, knee, ankle)
+            hip_angle = calculate_angle(shoulder, hip, knee)
+        except Exception as e:
+            print(f"Error calculating angles: {e}")
+            return self.reps, f"Error calculating angles"
 
         feedback = None
 

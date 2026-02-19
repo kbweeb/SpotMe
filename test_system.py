@@ -6,27 +6,30 @@ print()
 
 # Test geometry module
 from backend.geometry import calculate_angle
-print('✓ geometry module loaded')
+print('[OK] geometry module loaded')
 
 # Test squat counter
 from backend.squat import SquatCounter
 squat = SquatCounter()
-print('✓ SquatCounter initialized')
+print('[OK] SquatCounter initialized')
 
 # Test MoveNet local (should fail gracefully)
+from backend.pose import PoseDetector
 try:
-    from pose.local.movenet_local import MoveNetLocal
-    movenet = MoveNetLocal()
-    if movenet.interpreter:
-        print('✓ MoveNet model loaded (using TFLite)')
+    MoveNetLocal = PoseDetector._load_movenet_class()
+    if MoveNetLocal is None:
+        print('[OK] MoveNet module not found (fallback will be used)')
     else:
-        print('✓ MoveNet initialized (will fallback to MediaPipe)')
+        movenet = MoveNetLocal()
+        if movenet.interpreter:
+            print('[OK] MoveNet model loaded (using TFLite)')
+        else:
+            print('[OK] MoveNet initialized (will fallback to MediaPipe)')
 except Exception as e:
     print(f'  MoveNet Error: {e}')
 
 # Test main pose detector
-from backend.pose import PoseDetector
 pose = PoseDetector()
-print(f'✓ PoseDetector initialized (backend: {pose.backend})')
+print(f'[OK] PoseDetector initialized (backend: {pose.backend})')
 print()
-print('✓ All systems ready!')
+print('[OK] All systems ready!')
