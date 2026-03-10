@@ -1,4 +1,4 @@
-# GymBuddy
+# SpotMe
 
 GymBuddy is a local AI workout assistant for pose-based workout tracking.  
 It uses a React frontend for camera capture and a FastAPI backend for pose detection, rep counting, and exercise classification.
