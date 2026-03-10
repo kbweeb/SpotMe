@@ -1,13 +1,16 @@
 # GymBuddy
 
-GymBuddy is a local AI workout assistant for squat tracking.  
-It uses a React frontend for camera capture and a FastAPI backend for pose detection and rep counting.
+GymBuddy is a local AI workout assistant for pose-based workout tracking.  
+It uses a React frontend for camera capture and a FastAPI backend for pose detection, rep counting, and exercise classification.
 
 ## Features
 
 - Live webcam capture in the browser.
-- Real-time squat analysis over WebSocket.
+- Real-time movement analysis over WebSocket.
 - Rep counting with form feedback.
+- Exercise classification with confidence scoring:
+  - Trained keypoint model from checkpoint when available.
+  - Heuristic classifier fallback when no checkpoint exists.
 - Speech feedback in the frontend (browser speech synthesis).
 - Multiple pose backends with fallback:
   - Local MoveNet (TFLite) when available.
@@ -29,6 +32,11 @@ Gymbuddy/
     main.py             # FastAPI app + WebSocket endpoint
     pose.py             # Pose backend selection + landmark extraction
     squat.py            # Squat rep counting logic
+    exercise_classifier.py
+    init_dataset.py
+    collect_dataset_images.py
+    train_exercise_classifier.py
+    active_learning_sorter.py
     requirements.txt
   frontend/
     src/
@@ -127,7 +135,10 @@ Server responses include:
 {
   "detected": true,
   "reps": 3,
-  "feedback": "Rep 3"
+  "feedback": "Rep 3",
+  "exercise": "squat",
+  "confidence": 0.93,
+  "classifier": "model"
 }
 ```
 
@@ -138,9 +149,44 @@ Error example:
   "detected": false,
   "reps": 0,
   "feedback": "",
+  "exercise": "unknown",
+  "confidence": 0.0,
+  "classifier": "heuristic",
   "error": "Invalid image data"
 }
 ```
+
+## Classifier Workflow
+
+### 1) Create dataset folders
+
+```powershell
+python backend/init_dataset.py
+```
+
+### 2) Collect labeled images from webcam
+
+```powershell
+python backend/collect_dataset_images.py --label squat --split train
+```
+
+Controls: `S` save one frame, `A` toggle auto-capture, `Q` quit.
+
+### 3) Train keypoint classifier checkpoint
+
+```powershell
+python backend/train_exercise_classifier.py --dataset-root dataset
+```
+
+This writes a checkpoint to `backend/models/exercise_classifier.json`.
+
+### 4) Sort new incoming images with active learning
+
+```powershell
+python backend/active_learning_sorter.py --incoming-dir incoming --threshold 0.90
+```
+
+Confident predictions go to `auto_labeled/<class>/`; low confidence or no-pose images go to `needs_review/`.
 
 ## Frontend Configuration
 
@@ -148,12 +194,14 @@ Error example:
 
 - `VITE_BACKEND_HOST` (default: current page hostname)
 - `VITE_BACKEND_PORT` (default: `8010`)
+- `VITE_CAMERA_FLIP_HORIZONTAL` (default: `true`)
 
 For local overrides, create `frontend/.env`:
 
 ```env
 VITE_BACKEND_HOST=127.0.0.1
 VITE_BACKEND_PORT=8010
+VITE_CAMERA_FLIP_HORIZONTAL=true
 ```
 
 ## Testing

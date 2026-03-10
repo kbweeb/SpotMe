@@ -23,7 +23,7 @@ print("=" * 60)
 failures = 0
 
 # Test 1: Geometry Module
-print("\n[1/5] Testing Geometry Module...")
+print("\n[1/6] Testing Geometry Module...")
 try:
     from backend.geometry import calculate_angle
     import numpy as np
@@ -39,7 +39,7 @@ except Exception as e:
     log_fail(f"Error: {e}")
 
 # Test 2: Squat Counter
-print("\n[2/5] Testing Squat Counter...")
+print("\n[2/6] Testing Squat Counter...")
 try:
     sys.path.insert(0, "backend")
     from squat import SquatCounter
@@ -53,7 +53,7 @@ except Exception as e:
     log_fail(f"Error: {e}")
 
 # Test 3: Models Check
-print("\n[3/5] Checking Models...")
+print("\n[3/6] Checking Models...")
 try:
     model_path = "backend/models/movenet_lightning.tflite"
     if os.path.exists(model_path):
@@ -66,7 +66,7 @@ except Exception as e:
     log_fail(f"Error: {e}")
 
 # Test 4: Pose Detector with Sample Frame
-print("\n[4/5] Testing Pose Detection...")
+print("\n[4/6] Testing Pose Detection...")
 try:
     import numpy as np
     from pose import PoseDetector
@@ -91,7 +91,7 @@ except Exception as e:
     log_fail(f"Error: {e}")
 
 # Test 5: Complete Pipeline
-print("\n[5/5] Testing Complete Pipeline...")
+print("\n[5/6] Testing Complete Pipeline...")
 try:
     import numpy as np
     from squat import SquatCounter
@@ -110,6 +110,33 @@ try:
             print(f"    - Feedback: {feedback}")
     else:
         log_warn("Pipeline ran but no landmarks were produced for blank frame")
+except Exception as e:
+    failures += 1
+    log_fail(f"Error: {e}")
+
+# Test 6: Exercise Classifier
+print("\n[6/6] Testing Exercise Classifier...")
+try:
+    from backend.exercise_classifier import ExerciseClassifier, extract_features
+
+    classifier = ExerciseClassifier()
+    sample_landmarks = {
+        "shoulder": (0.5, 0.2),
+        "hip": (0.5, 0.45),
+        "knee": (0.5, 0.7),
+        "ankle": (0.5, 0.95),
+    }
+
+    features = extract_features(sample_landmarks)
+    assert features is not None
+
+    prediction = classifier.predict(sample_landmarks)
+    assert 0.0 <= prediction.confidence <= 1.0
+    assert isinstance(prediction.exercise, str) and prediction.exercise
+    log_ok(
+        f"Exercise classifier active (source: {prediction.source}, "
+        f"exercise: {prediction.exercise}, confidence: {prediction.confidence:.3f})"
+    )
 except Exception as e:
     failures += 1
     log_fail(f"Error: {e}")

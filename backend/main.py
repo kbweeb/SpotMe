@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from pose import PoseDetector
 from squat import SquatCounter
+from exercise_classifier import ExerciseClassifier
 
 app = FastAPI()
 
@@ -47,6 +48,7 @@ async def websocket_endpoint(ws: WebSocket):
     # Create new instances per connection to avoid shared state
     pose = PoseDetector()
     squat = SquatCounter()
+    classifier = ExerciseClassifier()
 
     while True:
         try:
@@ -65,6 +67,9 @@ async def websocket_endpoint(ws: WebSocket):
                         "detected": False,
                         "reps": squat.reps,
                         "feedback": "",
+                        "exercise": "unknown",
+                        "confidence": 0.0,
+                        "classifier": classifier.source,
                         "error": "Invalid image data"
                     })
                     continue
@@ -74,6 +79,9 @@ async def websocket_endpoint(ws: WebSocket):
                     "detected": False,
                     "reps": squat.reps,
                     "feedback": "",
+                    "exercise": "unknown",
+                    "confidence": 0.0,
+                    "classifier": classifier.source,
                     "error": f"Failed to decode image: {str(e)}"
                 })
                 continue
@@ -83,16 +91,23 @@ async def websocket_endpoint(ws: WebSocket):
                 await ws.send_json({
                     "detected": False,
                     "reps": squat.reps,
-                    "feedback": ""
+                    "feedback": "",
+                    "exercise": "unknown",
+                    "confidence": 0.0,
+                    "classifier": classifier.source,
                 })
                 continue
 
             reps, feedback = squat.analyze(landmarks)
+            prediction = classifier.predict(landmarks)
 
             await ws.send_json({
                 "detected": True,
                 "reps": reps,
-                "feedback": feedback or ""
+                "feedback": feedback or "",
+                "exercise": prediction.exercise,
+                "confidence": round(float(prediction.confidence), 4),
+                "classifier": prediction.source,
             })
             
         except WebSocketDisconnect:
@@ -104,6 +119,9 @@ async def websocket_endpoint(ws: WebSocket):
                     "detected": False,
                     "reps": squat.reps if 'squat' in locals() else 0,
                     "feedback": "",
+                    "exercise": "unknown",
+                    "confidence": 0.0,
+                    "classifier": classifier.source if 'classifier' in locals() else "heuristic",
                     "error": str(e)
                 })
             except Exception:

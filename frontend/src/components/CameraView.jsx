@@ -1,8 +1,15 @@
-import { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
+
+const FLIP_CAMERA_HORIZONTAL =
+  (import.meta.env.VITE_CAMERA_FLIP_HORIZONTAL ?? "true").toLowerCase() === "true";
 
 export default function CameraView({ onUpdate, onStatus }) {
   const videoRef = useRef(null);
   const wsRef = useRef(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraMessage, setCameraMessage] = useState(
+    "Requesting camera permission (localhost/HTTPS required)...",
+  );
 
   useEffect(() => {
     let interval = null;
@@ -11,6 +18,7 @@ export default function CameraView({ onUpdate, onStatus }) {
 
     const stopResources = () => {
       if (interval) clearInterval(interval);
+      setCameraActive(false);
       const ws = wsRef.current;
       if (ws) {
         try {
@@ -69,7 +77,8 @@ export default function CameraView({ onUpdate, onStatus }) {
     const ctx = canvas.getContext("2d");
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      onStatus?.("Camera API unavailable. Use localhost or HTTPS.");
+      const message = "Camera API unavailable. Use localhost or HTTPS.";
+      onStatus?.(message);
       return () => {
         mounted = false;
         stopResources();
@@ -85,15 +94,21 @@ export default function CameraView({ onUpdate, onStatus }) {
           onStatus?.("Video element missing.");
           return;
         }
+        setCameraMessage("Initializing camera stream...");
         videoElement.srcObject = stream;
         videoElement.playsInline = true;
         videoElement.muted = true;
         videoElement.autoplay = true;
-        videoElement.play().catch(() => {
+        videoElement.play().then(() => {
+          setCameraActive(true);
+          setCameraMessage("");
+          onStatus?.("Camera active.");
+        }).catch(() => {
           console.warn("Video autoplay failed");
+          setCameraActive(false);
+          setCameraMessage("Video autoplay failed. Click the page and retry.");
           onStatus?.("Video autoplay failed. Click page and retry.");
         });
-        onStatus?.("Camera active.");
 
         // send frames at interval but only when video is ready
         const sendFrame = () => {
@@ -108,7 +123,13 @@ export default function CameraView({ onUpdate, onStatus }) {
           canvas.height = vh;
           try {
             if (!ctx) return;
+            ctx.save();
+            if (FLIP_CAMERA_HORIZONTAL) {
+              ctx.translate(vw, 0);
+              ctx.scale(-1, 1);
+            }
             ctx.drawImage(videoElement, 0, 0, vw, vh);
+            ctx.restore();
             const base64 = canvas.toDataURL("image/jpeg").split(",")[1];
             ws.send(base64);
           } catch (err) {
@@ -120,7 +141,10 @@ export default function CameraView({ onUpdate, onStatus }) {
       })
       .catch((err) => {
         console.warn("getUserMedia failed:", err);
-        onStatus?.(`Camera access failed: ${err?.name || "UnknownError"}`);
+        setCameraActive(false);
+        const errorMessage = `Camera access failed: ${err?.name || "UnknownError"}`;
+        setCameraMessage(errorMessage);
+        onStatus?.(errorMessage);
       });
 
     return () => {
@@ -129,5 +153,16 @@ export default function CameraView({ onUpdate, onStatus }) {
     };
   }, [onStatus, onUpdate]);
 
-  return <video ref={videoRef} autoPlay muted playsInline style={{ width: "100%" }} />;
+  return (
+    <div className="camera-wrap">
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        playsInline
+        className={`camera-video${FLIP_CAMERA_HORIZONTAL ? " camera-video--flipped" : ""}`}
+      />
+      {!cameraActive && <div className="camera-overlay">{cameraMessage}</div>}
+    </div>
+  );
 }
